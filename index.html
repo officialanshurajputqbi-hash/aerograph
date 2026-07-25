@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#020403">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="AEROGRAPH — write math in the air with your finger. Hand-tracking + OCR powered air calculator.">
+<title>AEROGRAPH :: air_calculator.exe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+<style>
+  :root{
+    --bg:#020403;
+    --panel:#050d08;
+    --edge:#0f3d1e;
+    --edge-bright:#1c7a3d;
+    --green:#33ff77;
+    --green-dim:#1a8f47;
+    --green-glow: rgba(51,255,119,.55);
+    --amber:#ffb300;
+    --red:#ff4d4d;
+    --text:#c8ffd8;
+    --muted:#5f8f70;
+    --cyan:#00e5ff;
+    --purple:#d500f9;
+    --orange:#ff6d00;
+    --blue:#2979ff;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'JetBrains Mono', monospace;
+    min-height:100vh;
+    position:relative;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  #rain{position:fixed; inset:0; z-index:0; opacity:.12; pointer-events:none;}
+
+  #scan{
+    position:fixed; inset:0; z-index:2; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,0) 0, rgba(0,0,0,.08) 1px, rgba(0,0,0,0) 2px);
+    mix-blend-mode:overlay;
+  }
+  #vignette{
+    position:fixed; inset:0; z-index:2; pointer-events:none;
+    box-shadow:inset 0 0 120px rgba(0,0,0,.9);
+  }
+
+  .wrap{position:relative; z-index:3; max-width:1200px; margin:0 auto; padding:12px 10px 40px;}
+
+  .hud-bar{
+    display:flex; align-items:center; justify-content:space-between;
+    background:rgba(5,13,8,.85); border:1px solid var(--edge);
+    border-radius:8px; padding:8px 12px; margin-bottom:10px;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  }
+  .hud-left{display:flex; align-items:center; gap:8px; font-size:11px; color:var(--muted);}
+  .hud-right{display:flex; align-items:center; gap:10px;}
+  .hud-badge{
+    font-size:10px; padding:4px 8px; border-radius:4px;
+    background:rgba(26,143,71,.1); border:1px solid var(--edge);
+    color:var(--green-dim); display:flex; align-items:center; gap:5px;
+  }
+  .hud-badge .dot{width:6px;height:6px;border-radius:50%; background:var(--muted);}
+  .hud-badge .dot.active{background:var(--green); box-shadow:0 0 6px var(--green);}
+
+  .termbar{
+    display:flex; align-items:center; gap:10px;
+    background:#040a06; border:1px solid var(--edge);
+    border-bottom:none; border-radius:10px 10px 0 0;
+    padding:9px 14px; font-size:12px; color:var(--muted);
+  }
+  .lights{display:flex; gap:6px;}
+  .lights span{width:10px;height:10px;border-radius:50%;display:inline-block;}
+  .lights .r{background:#ff5f57;} .lights .y{background:#febc2e;} .lights .g{background:#28c840;}
+
+  .terminal{
+    border:1px solid var(--edge);
+    border-radius:0 0 10px 10px;
+    background:linear-gradient(180deg, rgba(26,143,71,.05), rgba(0,0,0,0) 30%);
+    padding:16px 16px 8px;
+    margin-bottom:12px;
+    box-shadow:0 0 40px rgba(26,143,71,.08), inset 0 0 60px rgba(0,0,0,.4);
+  }
+
+  .prompt{color:var(--green-dim); font-size:11px; margin-bottom:4px;}
+  .prompt::before{content:"guest@aerograph:~$ "; color:var(--muted);}
+
+  h1{
+    font-family:'VT323', monospace;
+    font-weight:400;
+    font-size:clamp(32px,6vw,52px);
+    margin:0 0 4px;
+    color:var(--green);
+    text-shadow:0 0 12px var(--green-glow), 0 0 2px var(--green);
+    letter-spacing:.02em;
+  }
+  .cursor-blink{display:inline-block; animation:blink 1s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+
+  .sub{color:var(--muted); font-size:12px; max-width:620px; line-height:1.5; margin-bottom:10px;}
+  .sub b{color:var(--green-dim);}
+
+  .layout{display:grid; grid-template-columns:1.25fr 1fr; gap:12px;}
+  @media (max-width:900px){ .layout{grid-template-columns:1fr;} }
+
+  .panel{
+    border:1px solid var(--edge);
+    border-radius:10px;
+    background:rgba(5,13,8,.6);
+    padding:12px;
+    box-shadow:0 0 24px rgba(26,143,71,.06);
+  }
+  .panel-title{
+    font-size:10px; letter-spacing:.15em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:10px; display:flex; align-items:center; gap:8px;
+  }
+  .panel-title::before{content:"//"; color:var(--edge-bright);}
+
+  .stage{
+    position:relative; width:100%; aspect-ratio:4/3;
+    border-radius:8px; overflow:hidden; background:#000;
+    border:1px solid var(--edge);
+    touch-action:none;
+  }
+  .mirror{position:absolute; inset:0; transform:scaleX(-1);}
+  video, canvas{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
+  video{filter:brightness(.4) saturate(.5) hue-rotate(70deg);}
+  #drawCanvas{background:transparent;}
+
+  .stage-overlay{
+    position:absolute; top:6px; left:6px; right:6px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    pointer-events:none; z-index:5; font-size:10px;
+  }
+  .badge{
+    padding:4px 8px; border-radius:3px;
+    background:rgba(2,4,3,.8); border:1px solid var(--edge-bright);
+    color:var(--green-dim); display:flex; align-items:center; gap:5px;
+    backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px);
+  }
+  .dot{width:6px;height:6px;border-radius:50%; background:var(--muted);}
+  .dot.draw{background:var(--green); box-shadow:0 0 6px var(--green);}
+  .dot.hover{background:var(--amber); box-shadow:0 0 6px var(--amber);}
+  .dot.clear{background:var(--red); box-shadow:0 0 6px var(--red);}
+
+  .stage-empty{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:10px; text-align:center; padding:16px; z-index:4;
+    background:rgba(2,4,3,.6);
+  }
+  .stage-empty p{color:var(--muted); font-size:11px; max-width:260px; margin:0; line-height:1.5;}
+
+  button{
+    font-family:'JetBrains Mono',monospace; font-weight:500;
+    background:rgba(26,143,71,.08);
+    color:var(--green);
+    border:1px solid var(--edge-bright);
+    padding:9px 12px; border-radius:4px; cursor:pointer;
+    font-size:11px; letter-spacing:.03em;
+    transition:all .15s ease;
+    touch-action:manipulation;
+    -webkit-touch-callout:none;
+    user-select:none;
+  }
+  button::before{content:"["; opacity:.6;}
+  button::after{content:"]"; opacity:.6;}
+  button:hover{background:rgba(51,255,119,.15); box-shadow:0 0 12px rgba(51,255,119,.25);}
+  button:active{transform:scale(.97);}
+  button.primary{background:rgba(255,179,0,.08); border-color:var(--amber); color:var(--amber);}
+  button.primary:hover{background:rgba(255,179,0,.18); box-shadow:0 0 12px rgba(255,179,0,.25);}
+  button.ghost{background:transparent; border-color:var(--edge); color:var(--muted);}
+  button.danger{background:rgba(255,77,77,.08); border-color:var(--red); color:var(--red);}
+  button.danger:hover{background:rgba(255,77,77,.18); box-shadow:0 0 12px rgba(255,77,77,.25);}
+  button:disabled{opacity:.3; cursor:not-allowed; box-shadow:none;}
+
+  .controls-row{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;}
+
+  .legend{margin-top:10px; display:grid; gap:5px; font-size:11px; color:var(--muted); border-top:1px dashed var(--edge); padding-top:10px;}
+  .legend div{display:flex; gap:8px; align-items:center;}
+  .legend span.icon{font-size:15px; width:18px; text-align:center;}
+  .legend b{color:var(--green-dim); font-weight:500;}
+
+  .tabs{display:flex; gap:0; margin-bottom:12px; border:1px solid var(--edge); border-radius:4px; overflow:hidden;}
+  .tab{
+    flex:1; text-align:center; padding:8px; cursor:pointer;
+    color:var(--muted); font-size:11px; letter-spacing:.05em;
+    border-right:1px solid var(--edge);
+    transition:all .15s ease;
+  }
+  .tab:last-child{border-right:none;}
+  .tab.active{color:var(--green); background:rgba(51,255,119,.08);}
+
+  label{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em;}
+  input[type=text]{
+    width:100%; background:#000; border:1px solid var(--edge);
+    color:var(--green); font-family:'JetBrains Mono',monospace; font-size:14px;
+    padding:10px; border-radius:4px; margin:5px 0 10px;
+    caret-color:var(--green);
+    -webkit-appearance:none;
+  }
+  input[type=text]::placeholder{color:var(--muted);}
+  input[type=text]:focus{outline:none; border-color:var(--green); box-shadow:0 0 8px rgba(51,255,119,.2);}
+
+  .result-box{
+    min-height:72px; border-radius:6px; border:1px solid var(--edge);
+    background:rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center; flex-direction:column;
+    gap:3px; padding:10px; text-align:center;
+  }
+  .result-box .prefix{font-size:10px; color:var(--muted); letter-spacing:.1em;}
+  .result-box .val{
+    font-family:'VT323',monospace; font-size:clamp(26px,4vw,40px); color:var(--amber);
+    text-shadow:0 0 14px rgba(255,179,0,.4);
+  }
+  .result-box .val.err{color:var(--red); text-shadow:0 0 14px rgba(255,77,77,.4); font-size:20px; font-family:'JetBrains Mono',monospace;}
+  .result-box .hint{font-size:10px; color:var(--muted);}
+
+  .practice-q{
+    text-align:center; padding:14px 8px; margin-bottom:10px;
+    border-radius:6px; border:1px dashed var(--edge-bright);
+    background:rgba(26,143,71,.04);
+  }
+  .practice-q .label{font-size:9px; color:var(--muted); letter-spacing:.15em; margin-bottom:4px;}
+  .practice-q .q{font-family:'VT323',monospace; font-size:30px; color:var(--green); text-shadow:0 0 10px var(--green-glow);}
+  .streak{font-size:10px; color:var(--muted); margin-top:6px;}
+  .streak b{color:var(--green-dim);}
+
+  .feedback{font-size:11px; margin-top:6px; text-align:center; min-height:14px; letter-spacing:.02em;}
+  .feedback.good{color:var(--green);}
+  .feedback.bad{color:var(--red);}
+
+  .history{margin-top:12px;}
+  .history h3{font-size:10px; text-transform:uppercase; letter-spacing:.15em; color:var(--muted); margin:0 0 6px;}
+  .history h3::before{content:"//"; color:var(--edge-bright); margin-right:5px;}
+  .history ul{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; max-height:140px; overflow-y:auto;}
+  .history li{
+    font-size:11px; padding:6px 8px; border-radius:4px;
+    background:rgba(255,255,255,.015); border:1px solid var(--edge);
+    display:flex; justify-content:space-between; color:var(--muted);
+  }
+  .history li b{color:var(--amber); font-weight:500;}
+  .history:empty + &{display:none;}
+
+  .mode-selector{
+    display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;
+  }
+  .mode-chip{
+    flex:1; min-width:90px; text-align:center; padding:8px 6px; border-radius:6px;
+    border:1px solid var(--edge); background:rgba(5,13,8,.5);
+    color:var(--muted); font-size:10px; cursor:pointer;
+    transition:all .15s ease; letter-spacing:.05em;
+    touch-action:manipulation;
+  }
+  .mode-chip.active{
+    border-color:var(--cyan); color:var(--cyan);
+    background:rgba(0,229,255,.08);
+    box-shadow:0 0 10px rgba(0,229,255,.15);
+  }
+  .mode-chip .m-icon{font-size:16px; display:block; margin-bottom:3px;}
+
+  .tools-row{
+    display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;
+  }
+  .color-swatch{
+    width:22px; height:22px; border-radius:50%;
+    border:2px solid transparent; cursor:pointer;
+    transition:all .15s ease;
+  }
+  .color-swatch.active{border-color:var(--text); box-shadow:0 0 6px rgba(255,255,255,.3);}
+  .stroke-slider{
+    flex:1; min-width:80px; max-width:120px;
+    -webkit-appearance:none; appearance:none;
+    height:4px; border-radius:2px; background:var(--edge);
+    outline:none;
+  }
+  .stroke-slider::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:14px; height:14px; border-radius:50%;
+    background:var(--green); cursor:pointer;
+    box-shadow:0 0 6px var(--green);
+  }
+
+  .stats-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;
+  }
+  .stat-card{
+    border:1px solid var(--edge); border-radius:6px;
+    background:rgba(0,0,0,.3); padding:8px; text-align:center;
+  }
+  .stat-card .stat-label{font-size:9px; color:var(--muted); letter-spacing:.1em; text-transform:uppercase;}
+  .stat-card .stat-val{font-family:'VT323',monospace; font-size:22px; color:var(--cyan); text-shadow:0 0 10px rgba(0,229,255,.3);}
+
+  .gesture-guide{
+    position:absolute; bottom:6px; left:6px; right:6px;
+    display:flex; justify-content:center; gap:8px;
+    pointer-events:none; z-index:5;
+  }
+  .gesture-hint{
+    font-size:9px; padding:3px 6px; border-radius:3px;
+    background:rgba(2,4,3,.75); border:1px solid var(--edge);
+    color:var(--muted); display:flex; align-items:center; gap:4px;
+    backdrop-filter:blur(2px);
+    opacity:0; transition:opacity .3s ease;
+  }
+  .gesture-hint.show{opacity:1;}
+
+  .timer-bar{
+    height:3px; background:var(--edge); border-radius:2px; margin-bottom:8px; overflow:hidden;
+  }
+  .timer-fill{
+    height:100%; width:100%; background:linear-gradient(90deg, var(--green), var(--amber));
+    border-radius:2px; transition:width .1s linear;
+  }
+
+  .toast-container{
+    position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    z-index:100; display:flex; flex-direction:column; gap:6px; pointer-events:none;
+  }
+  .toast{
+    background:rgba(5,13,8,.95); border:1px solid var(--edge-bright);
+    color:var(--green); padding:8px 14px; border-radius:6px;
+    font-size:11px; backdrop-filter:blur(8px);
+    animation:toastIn .3s ease, toastOut .3s ease 2.7s forwards;
+    box-shadow:0 4px 20px rgba(0,0,0,.5);
+    max-width:90vw; text-align:center;
+  }
+  .toast.warn{border-color:var(--amber); color:var(--amber);}
+  .toast.err{border-color:var(--red); color:var(--red);}
+  @keyframes toastIn{from{opacity:0; transform:translateY(-10px);} to{opacity:1; transform:translateY(0);}}
+  @keyframes toastOut{from{opacity:1; transform:translateY(0);} to{opacity:0; transform:translateY(-10px);}}
+
+  .mobile-nav{
+    display:none; position:fixed; bottom:0; left:0; right:0;
+    background:rgba(2,4,3,.95); border-top:1px solid var(--edge);
+    padding:6px 10px; z-index:50; backdrop-filter:blur(10px);
+    justify-content:space-around; align-items:center;
+  }
+  .mobile-nav .nav-btn{
+    background:none; border:none; color:var(--muted); font-size:10px;
+    padding:4px 8px; cursor:pointer; display:flex; flex-direction:column;
+    align-items:center; gap:2px;
+  }
+  .mobile-nav .nav-btn.active{color:var(--green);}
+  .mobile-nav .nav-btn .nav-icon{font-size:18px;}
+  @media (max-width:600px){
+    .mobile-nav{display:flex;}
+    .wrap{padding-bottom:70px;}
+  }
+
+  .touch-draw-btn{
+    position:absolute; bottom:6px; right:6px; z-index:6;
+    font-size:10px; padding:4px 8px;
+  }
+
+  footer{margin-top:20px; text-align:center; color:var(--muted); font-size:9px; letter-spacing:.05em;}
+  footer span{color:var(--green-dim);}
+
+  ::-webkit-scrollbar{width:5px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--edge); border-radius:3px;}
+  ::-webkit-scrollbar-thumb:hover{background:var(--edge-bright);}
+</style>
+</head>
+<body>
+<canvas id="rain"></canvas>
+<div id="scan"></div>
+<div id="vignette"></div>
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="wrap">
+  <div class="hud-bar">
+    <div class="hud-left">
+      <span style="color:var(--green); font-weight:700;">AEROGRAPH</span>
+      <span style="opacity:.5;">|</span>
+      <span>v2.0</span>
+    </div>
+    <div class="hud-right">
+      <div class="hud-badge"><span class="dot" id="connDot"></span><span id="connText">OFFLINE</span></div>
+      <div class="hud-badge"><span class="dot" id="handDot"></span><span id="handText">NO HAND</span></div>
+      <div class="hud-badge"><span id="fpsText">-- FPS</span></div>
+    </div>
+  </div>
+
+  <div class="termbar">
+    <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <span>guest@aerograph — air_calculator.exe</span>
+  </div>
+  <div class="terminal">
+    <div class="prompt">./run --mode=air-input --enhanced</div>
+    <h1>AEROGRAPH<span class="cursor-blink">_</span></h1>
+    <p class="sub">Write in the air with your index finger. <b>MediaPipe</b> tracks the stroke, <b>Tesseract OCR</b> reads it, <b>math.js</b> evaluates it. Now with <b>touch fallback</b>, <b>multi-mode drawing</b>, <b>speed training</b>, and <b>handwriting recognition</b>.</p>
+  </div>
+
+  <div class="mode-selector" id="modeSelector">
+    <div class="mode-chip active" data-drawmode="math">
+      <span class="m-icon">🧮</span>
+      <span>MATH</span>
+    </div>
+    <div class="mode-chip" data-drawmode="sketch">
+      <span class="m-icon">✏️</span>
+      <span>SKETCH</span>
+    </div>
+    <div class="mode-chip" data-drawmode="speed">
+      <span class="m-icon">⚡</span>
+      <span>SPEED</span>
+    </div>
+    <div class="mode-chip" data-drawmode="zen">
+      <span class="m-icon">🧘</span>
+      <span>ZEN</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <div class="panel-title">input_stream.cam</div>
+      <div class="stage" id="stage">
+        <div class="mirror">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="drawCanvas"></canvas>
+        </div>
+        <div class="stage-overlay">
+          <div class="badge"><span class="dot" id="gestureDot"></span><span id="gestureLabel">CAM_OFF</span></div>
+          <div class="badge" id="clearBadge" style="display:none;">PURGING…</div>
+          <div class="badge" id="timerBadge" style="display:none;"><span id="timerVal">30s</span></div>
+        </div>
+        <div class="stage-empty" id="stageEmpty">
+          <p>&gt; camera access required for hand-tracking.<br>&gt; all processing runs locally — nothing is recorded or uploaded.</p>
+          <button class="primary" id="startBtn">INIT_CAMERA</button>
+          <button class="ghost" id="touchFallbackBtn" style="margin-top:6px;">USE_TOUCH_INSTEAD</button>
+        </div>
+        <div class="gesture-guide" id="gestureGuide">
+          <div class="gesture-hint" id="hintDraw"><span class="dot draw"></span> index = draw</div>
+          <div class="gesture-hint" id="hintHover"><span class="dot hover"></span> index+middle = move</div>
+          <div class="gesture-hint" id="hintClear"><span class="dot clear"></span> open palm = clear</div>
+        </div>
+        <button class="touch-draw-btn ghost" id="touchDrawToggle" style="display:none;">[TOUCH_MODE]</button>
+      </div>
+
+      <div class="tools-row">
+        <label style="margin-right:4px;">COLOR:</label>
+        <div class="color-swatch active" style="background:#33ff77;" data-color="#33ff77" data-glow="rgba(51,255,119,.9)"></div>
+        <div class="color-swatch" style="background:#00e5ff;" data-color="#00e5ff" data-glow="rgba(0,229,255,.9)"></div>
+        <div class="color-swatch" style="background:#ffb300;" data-color="#ffb300" data-glow="rgba(255,179,0,.9)"></div>
+        <div class="color-swatch" style="background:#ff4d4d;" data-color="#ff4d4d" data-glow="rgba(255,77,77,.9)"></div>
+        <div class="color-swatch" style="background:#d500f9;" data-color="#d500f9" data-glow="rgba(213,0,249,.9)"></div>
+        <div class="color-swatch" style="background:#ffffff;" data-color="#ffffff" data-glow="rgba(255,255,255,.9)"></div>
+        <label style="margin-left:auto;">SIZE:</label>
+        <input type="range" class="stroke-slider" id="strokeSize" min="2" max="20" value="6">
+      </div>
+
+      <div class="controls-row">
+        <button id="undoBtn" disabled>UNDO</button>
+        <button id="clearBtn" disabled>CLEAR</button>
+        <button class="primary" id="readBtn" disabled>READ</button>
+        <button id="saveBtn" disabled>SAVE_IMG</button>
+      </div>
+
+      <div class="legend">
+        <div><span class="icon">☝️</span><b>index only</b> — draw stroke</div>
+        <div><span class="icon">✌️</span><b>index + middle</b> — pen up, move freely</div>
+        <div><span class="icon">🖐️</span><b>open palm, hold</b> — purge canvas</div>
+        <div><span class="icon">👆</span><b>touch fallback</b> — tap to draw, 2-finger tap to undo</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="tabs">
+        <div class="tab active" data-mode="free">FREE_CALC</div>
+        <div class="tab" data-mode="practice">TRAIN</div>
+        <div class="tab" data-mode="stats">STATS</div>
+      </div>
+
+      <div id="statsPanel" style="display:none;">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Drawn</div>
+            <div class="stat-val" id="statTotal">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Correct</div>
+            <div class="stat-val" id="statCorrect">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Best Streak</div>
+            <div class="stat-val" id="statBestStreak">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Time</div>
+            <div class="stat-val" id="statAvgTime">--</div>
+          </div>
+        </div>
+        <div style="height:180px; position:relative;">
+          <canvas id="statsChart"></canvas>
+        </div>
+      </div>
+
+      <div id="freePanel">
+        <label for="exprInput">recognized_input // editable</label>
+        <input type="text" id="exprInput" placeholder="draw something, then READ…">
+        <button class="primary" id="calcBtn" style="width:100%;">EXECUTE</button>
+        <div style="height:10px;"></div>
+        <div class="result-box"><div class="prefix">&gt;&gt;&gt; OUTPUT</div><div class="val" id="resultVal">--</div><div class="hint" id="resultHint">awaiting input</div></div>
+      </div>
+
+      <div id="practicePanel" style="display:none;">
+        <div class="timer-bar" id="timerBar" style="display:none;"><div class="timer-fill" id="timerFill"></div></div>
+        <div class="practice-q">
+          <div class="label">SOLVE:</div>
+          <div class="q" id="practiceQ">7 + 5</div>
+          <div class="streak">streak: <b id="streakVal">0</b> &nbsp;·&nbsp; solved: <b id="solvedVal">0</b> &nbsp;·&nbsp; time: <b id="timeVal">--</b></div>
+        </div>
+        <label for="answerInput">your_answer // from READ, editable</label>
+        <input type="text" id="answerInput" placeholder="write your answer in the air…">
+        <div class="controls-row" style="margin-top:0;">
+          <button class="primary" id="checkBtn" style="flex:1;">CHECK</button>
+          <button class="ghost" id="nextBtn">SKIP →</button>
+        </div>
+        <div class="feedback" id="practiceFeedback"></div>
+      </div>
+
+      <div class="history">
+        <h3>log_history</h3>
+        <ul id="historyList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <footer><span>root@aerograph</span> :: runs fully client-side · hand tracking · OCR · touch fallback · v2.0</footer>
+</div>
+
+<div class="mobile-nav" id="mobileNav">
+  <button class="nav-btn active" data-nav="draw"><span class="nav-icon">✏️</span>Draw</button>
+  <button class="nav-btn" data-nav="calc"><span class="nav-icon">🧮</span>Calc</button>
+  <button class="nav-btn" data-nav="train"><span class="nav-icon">🎯</span>Train</button>
+  <button class="nav-btn" data-nav="stats"><span class="nav-icon">📊</span>Stats</button>
+</div>
+
+<script>
+(function(){
+  const c = document.getElementById('rain');
+  const rctx = c.getContext('2d');
+  let cols, drops;
+  const chars = "01アイウエオカキクケコサシスセソ+-*/=∑∆π√".split('');
+  function setup(){
+    c.width = window.innerWidth; c.height = window.innerHeight;
+    cols = Math.floor(c.width / 18);
+    drops = new Array(cols).fill(0).map(()=>Math.random()*-50);
+  }
+  setup();
+  window.addEventListener('resize', setup);
+  function frame(){
+    rctx.fillStyle = 'rgba(2,4,3,0.08)';
+    rctx.fillRect(0,0,c.width,c.height);
+    rctx.fillStyle = '#33ff77';
+    rctx.font = '15px JetBrains Mono, monospace';
+    for(let i=0;i<cols;i++){
+      const ch = chars[Math.floor(Math.random()*chars.length)];
+      rctx.fillText(ch, i*18, drops[i]*18);
+      if(drops[i]*18 > c.height && Math.random() > 0.975) drops[i]=0;
+      drops[i]++;
+    }
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+
+function showToast(msg, type=''){
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast' + (type ? ' ' + type : '');
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(()=>toast.remove(), 3000);
+}
+
+const STATS_KEY = 'aerograph_stats_v2';
+function loadStats(){
+  try{ return JSON.parse(localStorage.getItem(STATS_KEY)) || defaultStats(); }
+  catch(e){ return defaultStats(); }
+}
+function defaultStats(){ return {total:0, correct:0, bestStreak:0, times:[], daily:[], lastDate:''}; }
+function saveStats(s){ localStorage.setItem(STATS_KEY, JSON.stringify(s)); }
+let stats = loadStats();
+
+function updateStatsDisplay(){
+  document.getElementById('statTotal').textContent = stats.total;
+  document.getElementById('statCorrect').textContent = stats.correct;
+  document.getElementById('statBestStreak').textContent = stats.bestStreak;
+  const avg = stats.times.length ? (stats.times.reduce((a,b)=>a+b,0)/stats.times.length).toFixed(1) : '--';
+  document.getElementById('statAvgTime').textContent = avg + 's';
+  updateChart();
+}
+
+let statsChart = null;
+function initChart(){
+  const ctx = document.getElementById('statsChart').getContext('2d');
+  statsChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Solve Time (s)',
+        data: [],
+        borderColor: '#33ff77',
+        backgroundColor: 'rgba(51,255,119,.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: '#33ff77'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { 
+          grid: { color: 'rgba(15,61,30,.3)' },
+          ticks: { color: '#5f8f70', font: { size: 9 } }
+        }
+      }
+    }
+  });
+}
+function updateChart(){
+  if(!statsChart) return;
+  const recent = stats.times.slice(-20);
+  statsChart.data.labels = recent.map((_,i)=>i+1);
+  statsChart.data.datasets[0].data = recent;
+  statsChart.update();
+}
+
+const video = document.getElementById('video');
+const drawCanvas = document.getElementById('drawCanvas');
+const ctx = drawCanvas.getContext('2d');
+const stage = document.getElementById('stage');
+const stageEmpty = document.getElementById('stageEmpty');
+const gestureDot = document.getElementById('gestureDot');
+const gestureLabel = document.getElementById('gestureLabel');
+const clearBadge = document.getElementById('clearBadge');
+const undoBtn = document.getElementById('undoBtn');
+const clearBtn = document.getElementById('clearBtn');
+const readBtn = document.getElementById('readBtn');
+const saveBtn = document.getElementById('saveBtn');
+
+let strokes = [];
+let currentStroke = null;
+let smoothX = null, smoothY = null;
+let clearHoldFrames = 0;
+const CLEAR_HOLD_THRESHOLD = 28;
+const SMOOTH = 0.55;
+
+let currentColor = '#33ff77';
+let currentGlow = 'rgba(51,255,119,.9)';
+let currentStrokeWidth = 6;
+
+let drawMode = 'math';
+
+function resizeCanvas(){
+  const rect = stage.getBoundingClientRect();
+  drawCanvas.width = rect.width;
+  drawCanvas.height = rect.height;
+  redrawAll();
+}
+window.addEventListener('resize', resizeCanvas);
+
+function redrawAll(){
+  ctx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
+  strokes.forEach(s => paintStroke(s));
+}
+
+function paintStroke(stroke){
+  if(stroke.length < 2) return;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = stroke.glow || currentGlow;
+  ctx.strokeStyle = stroke.color || currentColor;
+  ctx.lineWidth = stroke.width || currentStrokeWidth;
+  ctx.beginPath();
+  ctx.moveTo(stroke[0].x, stroke[0].y);
+  for(let i=1;i<stroke.length;i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+  ctx.stroke();
+}
+
+function addPoint(x,y){
+  if(!currentStroke){
+    currentStroke = [];
+    currentStroke.color = currentColor;
+    currentStroke.glow = currentGlow;
+    currentStroke.width = currentStrokeWidth;
+    strokes.push(currentStroke);
+    undoBtn.disabled = false;
+    saveBtn.disabled = false;
+  }
+  currentStroke.push({x,y});
+  redrawAll();
+}
+
+function liftPen(){ currentStroke = null; smoothX = null; smoothY = null; }
+
+function undoStroke(){
+  strokes.pop();
+  redrawAll();
+  undoBtn.disabled = strokes.length===0;
+  saveBtn.disabled = strokes.length===0;
+}
+
+function clearCanvas(){
+  strokes = [];
+  currentStroke = null;
+  redrawAll();
+  undoBtn.disabled = true;
+  saveBtn.disabled = true;
+}
+
+undoBtn.addEventListener('click', undoStroke);
+clearBtn.addEventListener('click', clearCanvas);
+
+document.querySelectorAll('.color-swatch').forEach(sw=>{
+  sw.addEventListener('click', ()=>{
+    document.querySelectorAll('.color-swatch').forEach(s=>s.classList.remove('active'));
+    sw.classList.add('active');
+    currentColor = sw.dataset.color;
+    currentGlow = sw.dataset.glow;
+  });
+});
+
+document.getElementById('strokeSize').addEventListener('input', (e)=>{
+  currentStrokeWidth = parseInt(e.target.value);
+});
+
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  if(strokes.length===0) return;
+  const tmp = document.createElement('canvas');
+  tmp.width = drawCanvas.width; tmp.height = drawCanvas.height;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#020403';
+  tctx.fillRect(0,0,tmp.width,tmp.height);
+  strokes.forEach(s=>{
+    if(s.length<2) return;
+    tctx.lineJoin='round'; tctx.lineCap='round';
+    tctx.shadowBlur=14; tctx.shadowColor=s.glow||currentGlow;
+    tctx.strokeStyle=s.color||currentColor; tctx.lineWidth=s.width||currentStrokeWidth;
+    tctx.beginPath(); tctx.moveTo(s[0].x,s[0].y);
+    for(let i=1;i<s.length;i++) tctx.lineTo(s[i].x,s[i].y);
+    tctx.stroke();
+  });
+  const link = document.createElement('a');
+  link.download = 'aerograph_' + Date.now() + '.png';
+  link.href = tmp.toDataURL();
+  link.click();
+  showToast('Image saved!');
+});
+
+function handScale(lm){
+  const dx = lm[0].x - lm[9].x, dy = lm[0].y - lm[9].y;
+  return Math.sqrt(dx*dx + dy*dy) || 0.001;
+}
+function fingerUp(lm, tipIdx, pipIdx, scale){
+  return lm[tipIdx].y < lm[pipIdx].y - scale*0.35;
+}
+
+function classifyGesture(lm){
+  const scale = handScale(lm);
+  const index  = fingerUp(lm, 8, 6, scale);
+  const middle = fingerUp(lm, 12, 10, scale);
+  const ring   = fingerUp(lm, 16, 14, scale);
+  const pinky  = fingerUp(lm, 20, 18, scale);
+
+  if(index && middle && ring && pinky) return 'clear';
+  if(index && middle && !ring && !pinky) return 'hover';
+  if(index && !middle && !ring && !pinky) return 'draw';
+  return 'idle';
+}
+
+function setGestureUI(state){
+  const map = {draw:'DRAWING', hover:'MOVING', clear:'CLEARING', idle:'TRACKING'};
+  gestureDot.className = 'dot' + (state==='draw'?' draw':state==='hover'?' hover':state==='clear'?' clear':'');
+  gestureLabel.textContent = map[state] || 'TRACKING';
+  document.getElementById('handDot').className = 'dot' + (state==='draw'?' draw active':state==='hover'?' hover active':'');
+  document.getElementById('handText').textContent = map[state] || 'NO HAND';
+
+  document.getElementById('hintDraw').classList.toggle('show', state==='draw');
+  document.getElementById('hintHover').classList.toggle('show', state==='hover');
+  document.getElementById('hintClear').classList.toggle('show', state==='clear');
+}
+
+function mapLandmarkToCanvas(nx, ny){
+  const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+  const cw = drawCanvas.width, ch = drawCanvas.height;
+  const scale = Math.max(cw / vw, ch / vh);
+  const dw = vw * scale, dh = vh * scale;
+  const offX = (cw - dw) / 2, offY = (ch - dh) / 2;
+  return { x: nx * dw + offX, y: ny * dh + offY };
+}
+
+let frameCount = 0, lastFpsTime = performance.now();
+function updateFPS(){
+  frameCount++;
+  const now = performance.now();
+  if(now - lastFpsTime >= 1000){
+    document.getElementById('fpsText').textContent = frameCount + ' FPS';
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+let camera = null;
+let isCameraRunning = false;
+
+const hands = new Hands({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`});
+hands.setOptions({
+  maxNumHands:1,
+  modelComplexity:1,
+  minDetectionConfidence:0.7,
+  minTrackingConfidence:0.6
+});
+
+hands.onResults((results)=>{
+  updateFPS();
+  if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){
+    setGestureUI('idle');
+    liftPen();
+    clearHoldFrames = 0;
+    clearBadge.style.display='none';
+    return;
+  }
+  const lm = results.multiHandLandmarks[0];
+  const gesture = classifyGesture(lm);
+  setGestureUI(gesture);
+
+  const mapped = mapLandmarkToCanvas(lm[8].x, lm[8].y);
+  smoothX = smoothX===null ? mapped.x : smoothX + (mapped.x - smoothX) * SMOOTH;
+  smoothY = smoothY===null ? mapped.y : smoothY + (mapped.y - smoothY) * SMOOTH;
+
+  if(gesture === 'draw'){
+    clearHoldFrames = 0;
+    clearBadge.style.display='none';
+    addPoint(smoothX, smoothY);
+  } else if(gesture === 'clear'){
+    clearHoldFrames++;
+    clearBadge.style.display='flex';
+    if(clearHoldFrames > CLEAR_HOLD_THRESHOLD){
+      clearCanvas();
+      clearHoldFrames = 0;
+      clearBadge.style.display='none';
+      showToast('Canvas cleared!');
+    }
+    liftPen();
+  } else {
+    clearHoldFrames = 0;
+    clearBadge.style.display='none';
+    liftPen();
+  }
+});
+
+document.getElementById('startBtn').addEventListener('click', async ()=>{
+  try{
+    stageEmpty.innerHTML = '<p>&gt; initializing camera…</p>';
+    camera = new Camera(video, {
+      onFrame: async ()=>{ await hands.send({image:video}); },
+      width:640, height:480
+    });
+    await camera.start();
+    isCameraRunning = true;
+    stageEmpty.style.display='none';
+    resizeCanvas();
+    readBtn.disabled = false;
+    clearBtn.disabled = false;
+    document.getElementById('connDot').classList.add('active');
+    document.getElementById('connText').textContent = 'LIVE';
+    showToast('Camera active! Show your hand to begin.');
+  }catch(e){
+    stageEmpty.innerHTML = '<p>&gt; ERROR: camera permission denied.<br>&gt; this app preview (in-app browser) often blocks camera access.<br>&gt; open in Chrome for hand-tracking, or use touch mode now.</p><button class="primary" id="startBtn2">RETRY</button><button class="ghost" id="touchFallbackBtn2" style="margin-top:6px;">USE_TOUCH_INSTEAD</button>';
+    document.getElementById('startBtn2').addEventListener('click', ()=>location.reload());
+    document.getElementById('touchFallbackBtn2').addEventListener('click', ()=>{
+      document.getElementById('touchFallbackBtn').click();
+    });
+    showToast('Camera blocked — try touch mode or open in a regular browser', 'warn');
+  }
+});
+
+let touchMode = false;
+let isTouchDrawing = false;
+
+document.getElementById('touchFallbackBtn').addEventListener('click', ()=>{
+  touchMode = true;
+  stageEmpty.style.display='none';
+  resizeCanvas();
+  readBtn.disabled = false;
+  clearBtn.disabled = false;
+  document.getElementById('touchDrawToggle').style.display='block';
+  document.getElementById('touchDrawToggle').textContent = '[TOUCH: ON]';
+  showToast('Touch mode active! Tap & drag to draw.');
+});
+
+document.getElementById('touchDrawToggle').addEventListener('click', ()=>{
+  touchMode = !touchMode;
+  document.getElementById('touchDrawToggle').textContent = touchMode ? '[TOUCH: ON]' : '[TOUCH: OFF]';
+});
+
+stage.addEventListener('touchstart', (e)=>{
+  if(!touchMode) return;
+  e.preventDefault();
+  const touches = e.touches;
+  if(touches.length === 2){
+    undoStroke();
+    return;
+  }
+  if(touches.length === 1){
+    isTouchDrawing = true;
+    const rect = drawCanvas.getBoundingClientRect();
+    const x = touches[0].clientX - rect.left;
+    const y = touches[0].clientY - rect.top;
+    addPoint(x, y);
+  }
+}, {passive:false});
+
+stage.addEventListener('touchmove', (e)=>{
+  if(!touchMode || !isTouchDrawing) return;
+  e.preventDefault();
+  const touches = e.touches;
+  if(touches.length === 1){
+    const rect = drawCanvas.getBoundingClientRect();
+    const x = touches[0].clientX - rect.left;
+    const y = touches[0].clientY - rect.top;
+    addPoint(x, y);
+  }
+}, {passive:false});
+
+stage.addEventListener('touchend', (e)=>{
+  if(!touchMode) return;
+  e.preventDefault();
+  isTouchDrawing = false;
+  liftPen();
+});
+
+stage.addEventListener('mousedown', (e)=>{
+  if(!touchMode) return;
+  isTouchDrawing = true;
+  const rect = drawCanvas.getBoundingClientRect();
+  addPoint(e.clientX - rect.left, e.clientY - rect.top);
+});
+stage.addEventListener('mousemove', (e)=>{
+  if(!touchMode || !isTouchDrawing) return;
+  const rect = drawCanvas.getBoundingClientRect();
+  addPoint(e.clientX - rect.left, e.clientY - rect.top);
+});
+stage.addEventListener('mouseup', ()=>{ isTouchDrawing = false; liftPen(); });
+stage.addEventListener('mouseleave', ()=>{ isTouchDrawing = false; liftPen(); });
+
+function renderCleanForOCR(){
+  const tmp = document.createElement('canvas');
+  tmp.width = drawCanvas.width; tmp.height = drawCanvas.height;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#ffffff';
+  tctx.fillRect(0,0,tmp.width,tmp.height);
+  strokes.forEach(stroke=>{
+    if(stroke.length < 2) return;
+    tctx.strokeStyle = '#000000';
+    tctx.lineWidth = Math.max(9, (stroke.width||currentStrokeWidth)+3);
+    tctx.lineJoin = 'round'; tctx.lineCap = 'round';
+    tctx.beginPath();
+    tctx.moveTo(stroke[0].x, stroke[0].y);
+    for(let i=1;i<stroke.length;i++) tctx.lineTo(stroke[i].x, stroke[i].y);
+    tctx.stroke();
+  });
+  return tmp.toDataURL('image/png');
+}
+
+function cleanOcrText(raw){
+  return raw
+    .replace(/\n/g,'')
+    .replace(/[oO]/g,'0')
+    .replace(/[xX×]/g,'*')
+    .replace(/÷/g,'/')
+    .replace(/–|—/g,'-')
+    .replace(/[^0-9+\-*/.() =]/g,'')
+    .trim();
+}
+
+async function readCanvas(targetInputId, btn){
+  if(strokes.length === 0){
+    document.getElementById(targetInputId).value = '';
+    showToast('Nothing drawn yet — write something first!', 'warn');
+    return;
+  }
+  const original = btn.textContent;
+  btn.textContent = 'READING…';
+  btn.disabled = true;
+  try{
+    const dataUrl = renderCleanForOCR();
+    const { data } = await Tesseract.recognize(dataUrl, 'eng', {
+      tessedit_char_whitelist: '0123456789+-*/.()= '
+    });
+    const cleaned = cleanOcrText(data.text);
+    document.getElementById(targetInputId).value = cleaned;
+    showToast(cleaned ? `Read: "${cleaned}"` : 'Could not read clearly', cleaned ? '' : 'warn');
+  }catch(e){
+    console.error(e);
+    document.getElementById(targetInputId).value = '';
+    showToast('Read failed — try writing bigger and slower', 'err');
+  }finally{
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+}
+
+const historyList = document.getElementById('historyList');
+function pushHistory(expr, result){
+  const li = document.createElement('li');
+  li.innerHTML = `<span>${expr}</span><b>${result}</b>`;
+  historyList.prepend(li);
+  stats.total++;
+  saveStats(stats);
+  updateStatsDisplay();
+}
+
+readBtn.addEventListener('click', ()=>{
+  const mode = document.querySelector('.tab.active').dataset.mode;
+  if(mode === 'free'){
+    readCanvas('exprInput', readBtn);
+  } else if(mode === 'practice'){
+    readCanvas('answerInput', readBtn);
+  }
+});
+
+document.getElementById('calcBtn').addEventListener('click', ()=>{
+  const exprRaw = document.getElementById('exprInput').value.trim();
+  const resultVal = document.getElementById('resultVal');
+  const resultHint = document.getElementById('resultHint');
+  resultVal.classList.remove('err');
+  if(!exprRaw){ resultVal.textContent='--'; resultHint.textContent='awaiting input'; return; }
+  try{
+    const expr = exprRaw.replace(/=+$/,'');
+    const val = math.evaluate(expr);
+    resultVal.textContent = val;
+    resultHint.textContent = 'from: ' + expr;
+    pushHistory(expr, val);
+    showToast(`Result: ${val}`);
+  }catch(e){
+    resultVal.textContent = 'ERR: SYNTAX';
+    resultVal.classList.add('err');
+    resultHint.textContent = "couldn't evaluate — edit and retry";
+    showToast('Syntax error — check your expression', 'err');
+  }
+});
+
+document.querySelectorAll('.mode-chip').forEach(chip=>{
+  chip.addEventListener('click', ()=>{
+    document.querySelectorAll('.mode-chip').forEach(c=>c.classList.remove('active'));
+    chip.classList.add('active');
+    drawMode = chip.dataset.drawmode;
+    showToast(`Mode: ${drawMode.toUpperCase()}`);
+    if(drawMode === 'speed'){
+      startSpeedMode();
+    } else {
+      stopSpeedMode();
+    }
+  });
+});
+
+let speedTimer = null;
+let speedTimeLeft = 30;
+let speedActive = false;
+
+function startSpeedMode(){
+  speedActive = true;
+  speedTimeLeft = 30;
+  document.getElementById('timerBar').style.display = 'block';
+  document.getElementById('timerBadge').style.display = 'flex';
+  updateSpeedTimer();
+  speedTimer = setInterval(()=>{
+    speedTimeLeft--;
+    updateSpeedTimer();
+    if(speedTimeLeft <= 0){
+      clearInterval(speedTimer);
+      speedActive = false;
+      showToast('Time up! Check your answers.', 'warn');
+      document.getElementById('timerBar').style.display = 'none';
+      document.getElementById('timerBadge').style.display = 'none';
+    }
+  }, 1000);
+}
+
+function stopSpeedMode(){
+  speedActive = false;
+  if(speedTimer) clearInterval(speedTimer);
+  document.getElementById('timerBar').style.display = 'none';
+  document.getElementById('timerBadge').style.display = 'none';
+}
+
+function updateSpeedTimer(){
+  const pct = (speedTimeLeft / 30) * 100;
+  document.getElementById('timerFill').style.width = pct + '%';
+  document.getElementById('timerVal').textContent = speedTimeLeft + 's';
+}
+
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    const mode = tab.dataset.mode;
+    document.getElementById('freePanel').style.display = mode==='free' ? 'block':'none';
+    document.getElementById('practicePanel').style.display = mode==='practice' ? 'block':'none';
+    document.getElementById('statsPanel').style.display = mode==='stats' ? 'block':'none';
+    if(mode === 'stats'){
+      updateStatsDisplay();
+      if(!statsChart) initChart();
+    }
+  });
+});
+
+document.querySelectorAll('.nav-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const nav = btn.dataset.nav;
+    if(nav === 'draw'){
+      document.querySelector('.layout').scrollIntoView({behavior:'smooth'});
+    } else if(nav === 'calc'){
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      document.querySelector('[data-mode="free"]').classList.add('active');
+      document.getElementById('freePanel').style.display = 'block';
+      document.getElementById('practicePanel').style.display = 'none';
+      document.getElementById('statsPanel').style.display = 'none';
+    } else if(nav === 'train'){
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      document.querySelector('[data-mode="practice"]').classList.add('active');
+      document.getElementById('freePanel').style.display = 'none';
+      document.getElementById('practicePanel').style.display = 'block';
+      document.getElementById('statsPanel').style.display = 'none';
+    } else if(nav === 'stats'){
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      document.querySelector('[data-mode="stats"]').classList.add('active');
+      document.getElementById('freePanel').style.display = 'none';
+      document.getElementById('practicePanel').style.display = 'none';
+      document.getElementById('statsPanel').style.display = 'block';
+      updateStatsDisplay();
+      if(!statsChart) initChart();
+    }
+  });
+});
+
+let currentAnswer = 0;
+let streak = 0, solved = 0;
+let questionStartTime = 0;
+
+function newQuestion(){
+  const ops = ['+','-','*'];
+  const op = ops[Math.floor(Math.random()*ops.length)];
+  let a = Math.floor(Math.random()*20)+1;
+  let b = Math.floor(Math.random()*20)+1;
+  if(op === '-' && b > a) [a,b] = [b,a];
+  if(op === '*'){ a = Math.floor(Math.random()*12)+1; b = Math.floor(Math.random()*12)+1; }
+  document.getElementById('practiceQ').textContent = `${a} ${op} ${b}`;
+  currentAnswer = math.evaluate(`${a}${op}${b}`);
+  document.getElementById('answerInput').value = '';
+  const fb = document.getElementById('practiceFeedback');
+  fb.textContent = ''; fb.className = 'feedback';
+  questionStartTime = Date.now();
+  document.getElementById('timeVal').textContent = '--';
+}
+
+document.getElementById('nextBtn').addEventListener('click', newQuestion);
+
+document.getElementById('checkBtn').addEventListener('click', ()=>{
+  const val = document.getElementById('answerInput').value.trim();
+  const fb = document.getElementById('practiceFeedback');
+  if(!val){ fb.textContent = '> write your answer, then READ_DRAWING.'; fb.className='feedback'; return; }
+  let userVal;
+  try{ userVal = math.evaluate(val); } catch(e){ userVal = null; }
+  const timeTaken = questionStartTime ? ((Date.now() - questionStartTime)/1000).toFixed(1) : null;
+
+  if(userVal !== null && Number(userVal) === Number(currentAnswer)){
+    streak++; solved++;
+    fb.textContent = '> CORRECT';
+    fb.className = 'feedback good';
+    document.getElementById('streakVal').textContent = streak;
+    document.getElementById('solvedVal').textContent = solved;
+    if(timeTaken) document.getElementById('timeVal').textContent = timeTaken + 's';
+    stats.correct++;
+    if(streak > stats.bestStreak) stats.bestStreak = streak;
+    if(timeTaken) stats.times.push(parseFloat(timeTaken));
+    stats.total++;
+    saveStats(stats);
+    updateStatsDisplay();
+    showToast(`Correct! +1 streak (${streak})`);
+    setTimeout(newQuestion, 900);
+  } else {
+    streak = 0;
+    document.getElementById('streakVal').textContent = streak;
+    fb.textContent = `> INCORRECT — expected ${currentAnswer}`;
+    fb.className = 'feedback bad';
+    showToast('Wrong answer — try again!', 'warn');
+  }
+});
+
+newQuestion();
+resizeCanvas();
+updateStatsDisplay();
+
+if('serviceWorker' in navigator){
+  console.log('PWA capable');
+}
+</script>
+</body>
+</html>
