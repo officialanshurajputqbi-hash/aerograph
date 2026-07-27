@@ -131,15 +131,19 @@
   .panel-title::before{content:"//"; color:var(--edge-bright);}
 
   .stage{
-    position:relative; width:100%; aspect-ratio:4/3;
+    position:relative; width:100%; height:min(78vh, 760px);
     border-radius:8px; overflow:hidden; background:#000;
     border:1px solid var(--edge);
     touch-action:none;
   }
+  @media (max-width:600px){ .stage{ height:min(65vh, 560px); } }
   .mirror{position:absolute; inset:0; transform:scaleX(-1);}
   video, canvas{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
   video{filter:brightness(.4) saturate(.5) hue-rotate(70deg);}
-  #drawCanvas{background:transparent;}
+  #skeletonCanvas{pointer-events:none; z-index:3;}
+  #drawCanvas{background:transparent; z-index:4;}
+  .map-toggle-btn{position:absolute; bottom:6px; left:6px; z-index:6; font-size:10px; padding:4px 8px;}
+  .conf-badge{font-variant-numeric:tabular-nums;}
 
   .stage-overlay{
     position:absolute; top:6px; left:6px; right:6px;
@@ -276,11 +280,11 @@
     display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;
   }
   .color-swatch{
-    width:22px; height:22px; border-radius:50%;
-    border:2px solid transparent; cursor:pointer;
-    transition:all .15s ease;
+    width:32px; height:32px; border-radius:50%;
+    border:3px solid transparent; cursor:pointer;
+    transition:all .15s ease; flex-shrink:0;
   }
-  .color-swatch.active{border-color:var(--text); box-shadow:0 0 6px rgba(255,255,255,.3);}
+  .color-swatch.active{border-color:var(--text); box-shadow:0 0 10px rgba(255,255,255,.5); transform:scale(1.12);}
   .stroke-slider{
     flex:1; min-width:80px; max-width:120px;
     -webkit-appearance:none; appearance:none;
@@ -328,7 +332,7 @@
 
   .toast-container{
     position:fixed; top:12px; left:50%; transform:translateX(-50%);
-    z-index:100; display:flex; flex-direction:column; gap:6px; pointer-events:none;
+    z-index:500; display:flex; flex-direction:column; gap:6px; pointer-events:none;
   }
   .toast{
     background:rgba(5,13,8,.95); border:1px solid var(--edge-bright);
@@ -373,6 +377,43 @@
   ::-webkit-scrollbar-track{background:transparent;}
   ::-webkit-scrollbar-thumb{background:var(--edge); border-radius:3px;}
   ::-webkit-scrollbar-thumb:hover{background:var(--edge-bright);}
+
+  /* --- Full-hand-control additions --- */
+  .stage.fullscreen-stage{
+    position:fixed; inset:0; width:100vw; height:100vh; z-index:300;
+    aspect-ratio:auto; border-radius:0; border:none;
+  }
+  .exit-fs-btn{position:fixed; top:12px; right:12px; z-index:301; display:none;}
+  .hand-cursor{
+    position:fixed; top:0; left:0; width:28px; height:28px; border-radius:50%;
+    border:2px solid var(--green); background:rgba(51,255,119,.15);
+    transform:translate(-50%,-50%); pointer-events:none; z-index:999;
+    transition:width .12s ease,height .12s ease,background .12s ease,border-color .12s ease,box-shadow .12s ease;
+    box-shadow:0 0 14px rgba(51,255,119,.5);
+    display:none;
+  }
+  .hand-cursor::after{
+    content:""; position:absolute; inset:0; margin:auto; width:4px; height:4px;
+    border-radius:50%; background:var(--green);
+  }
+  .hand-cursor.active{display:block;}
+  .hand-cursor.pinch-active{
+    width:16px; height:16px; background:rgba(255,179,0,.4); border-color:var(--amber);
+    box-shadow:0 0 20px rgba(255,179,0,.75);
+  }
+  .hand-hover{
+    outline:2px solid var(--cyan) !important;
+    box-shadow:0 0 16px rgba(0,229,255,.55) !important;
+  }
+  .fs-row{display:flex; gap:6px; margin-top:8px;}
+  .voice-badge{cursor:default;}
+  .fs-quick-btn{
+    pointer-events:auto; cursor:pointer; font-family:'JetBrains Mono',monospace;
+    padding:4px 8px; border-radius:3px; font-size:10px;
+    background:rgba(2,4,3,.8); border:1px solid var(--edge-bright);
+    color:var(--green-dim);
+  }
+  .fs-quick-btn:hover{background:rgba(51,255,119,.15); color:var(--green);}
 </style>
 </head>
 <body>
@@ -380,6 +421,8 @@
 <div id="scan"></div>
 <div id="vignette"></div>
 <div class="toast-container" id="toastContainer"></div>
+<div class="hand-cursor" id="handCursor"></div>
+<button class="exit-fs-btn danger" id="exitFsBtn">[EXIT_FULLSCREEN]</button>
 
 <div class="wrap">
   <div class="hud-bar">
@@ -392,6 +435,7 @@
       <div class="hud-badge"><span class="dot" id="connDot"></span><span id="connText">OFFLINE</span></div>
       <div class="hud-badge"><span class="dot" id="handDot"></span><span id="handText">NO HAND</span></div>
       <div class="hud-badge"><span id="fpsText">-- FPS</span></div>
+      <div class="hud-badge conf-badge"><span id="confText">CONF --</span></div>
     </div>
   </div>
 
@@ -430,12 +474,15 @@
       <div class="stage" id="stage">
         <div class="mirror">
           <video id="video" autoplay playsinline muted></video>
+          <canvas id="skeletonCanvas"></canvas>
           <canvas id="drawCanvas"></canvas>
         </div>
+        <button class="map-toggle-btn ghost" id="mapToggleBtn">[MAP: ON]</button>
         <div class="stage-overlay">
           <div class="badge"><span class="dot" id="gestureDot"></span><span id="gestureLabel">CAM_OFF</span></div>
           <div class="badge" id="clearBadge" style="display:none;">PURGING…</div>
           <div class="badge" id="timerBadge" style="display:none;"><span id="timerVal">30s</span></div>
+          <button class="fs-quick-btn" id="fsQuickBtn">⛶ FULLSCREEN</button>
         </div>
         <div class="stage-empty" id="stageEmpty">
           <p>&gt; camera access required for hand-tracking.<br>&gt; all processing runs locally — nothing is recorded or uploaded.</p>
@@ -468,11 +515,18 @@
         <button class="primary" id="readBtn" disabled>READ</button>
         <button id="saveBtn" disabled>SAVE_IMG</button>
       </div>
+      <div class="fs-row">
+        <button class="ghost" id="fullscreenBtn">FULLSCREEN</button>
+        <button class="ghost" id="voiceBtn">[VOICE: ON]</button>
+        <button class="ghost" id="autoReadBtn">[AUTO_READ: ON]</button>
+      </div>
 
       <div class="legend">
         <div><span class="icon">☝️</span><b>index only</b> — draw stroke</div>
         <div><span class="icon">✌️</span><b>index + middle</b> — pen up, move freely</div>
         <div><span class="icon">🖐️</span><b>open palm, hold</b> — purge canvas</div>
+        <div><span class="icon">🤏</span><b>pinch (thumb+index)</b> — click any button on screen</div>
+        <div><span class="icon">↔️</span><b>open hand swipe</b> — switch FREE/TRAIN/STATS tabs</div>
         <div><span class="icon">👆</span><b>touch fallback</b> — tap to draw, 2-finger tap to undo</div>
       </div>
     </div>
@@ -587,6 +641,16 @@ function showToast(msg, type=''){
   setTimeout(()=>toast.remove(), 3000);
 }
 
+// Works even if the math.js CDN is blocked/offline — falls back to a safe restricted evaluator
+function safeEvaluate(expr){
+  const clean = String(expr).trim();
+  if(typeof math !== 'undefined' && typeof math.evaluate === 'function'){
+    return math.evaluate(clean);
+  }
+  if(!/^[0-9+\-*/.()\s]+$/.test(clean) || clean === '') throw new Error('Invalid expression');
+  return Function('"use strict"; return (' + clean + ')')();
+}
+
 const STATS_KEY = 'aerograph_stats_v2';
 function loadStats(){
   try{ return JSON.parse(localStorage.getItem(STATS_KEY)) || defaultStats(); }
@@ -607,6 +671,10 @@ function updateStatsDisplay(){
 
 let statsChart = null;
 function initChart(){
+  if(typeof Chart === 'undefined'){
+    showToast('Chart library unavailable — numbers above still work', 'warn');
+    return;
+  }
   const ctx = document.getElementById('statsChart').getContext('2d');
   statsChart = new Chart(ctx, {
     type: 'line',
@@ -648,7 +716,16 @@ function updateChart(){
 const video = document.getElementById('video');
 const drawCanvas = document.getElementById('drawCanvas');
 const ctx = drawCanvas.getContext('2d');
+const skeletonCanvas = document.getElementById('skeletonCanvas');
+const sctx = skeletonCanvas.getContext('2d');
 const stage = document.getElementById('stage');
+const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+let showSkeleton = true;
+document.getElementById('mapToggleBtn').addEventListener('click', ()=>{
+  showSkeleton = !showSkeleton;
+  document.getElementById('mapToggleBtn').textContent = showSkeleton ? '[MAP: ON]' : '[MAP: OFF]';
+  if(!showSkeleton) sctx.clearRect(0,0,skeletonCanvas.width,skeletonCanvas.height);
+});
 const stageEmpty = document.getElementById('stageEmpty');
 const gestureDot = document.getElementById('gestureDot');
 const gestureLabel = document.getElementById('gestureLabel');
@@ -663,7 +740,144 @@ let currentStroke = null;
 let smoothX = null, smoothY = null;
 let clearHoldFrames = 0;
 const CLEAR_HOLD_THRESHOLD = 28;
-const SMOOTH = 0.55;
+let gestureHistory = [];
+const GESTURE_BUFFER = 5;
+function stableGesture(g){
+  gestureHistory.push(g);
+  if(gestureHistory.length > GESTURE_BUFFER) gestureHistory.shift();
+  const counts = {};
+  gestureHistory.forEach(x => counts[x] = (counts[x]||0)+1);
+  let best = g, bestCount = 0;
+  for(const k in counts){ if(counts[k] > bestCount){ best = k; bestCount = counts[k]; } }
+  return best;
+}
+function adaptiveSmooth(x, y){
+  if(smoothX === null){ smoothX = x; smoothY = y; return {x, y}; }
+  const dist = Math.hypot(x - smoothX, y - smoothY);
+  const ref = drawCanvas.width * 0.05;
+  const norm = Math.min(dist / ref, 1);
+  const alpha = 0.15 + norm * 0.55;
+  smoothX += (x - smoothX) * alpha;
+  smoothY += (y - smoothY) * alpha;
+  return {x: smoothX, y: smoothY};
+}
+
+// ================= Full hand-only control system =================
+const handCursorEl = document.getElementById('handCursor');
+let cursorX = 0, cursorY = 0;
+let pinchHistory = [];
+let pinchDown = false, pinchWasDown = false;
+let lastHoverEl = null;
+let voiceEnabled = true;
+let autoReadEnabled = true;
+let autoReadTimer = null;
+let isFullscreenCanvas = false;
+let palmXHistory = [];
+let lastSwipeTime = 0;
+
+function pinchDistance(lm){
+  const scale = handScale(lm);
+  return Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / scale;
+}
+function stablePinch(raw){
+  pinchHistory.push(raw);
+  if(pinchHistory.length > 4) pinchHistory.shift();
+  return pinchHistory.filter(Boolean).length >= 3;
+}
+
+function updateHandCursor(lm){
+  const idx = lm[8];
+  cursorX = (1 - idx.x) * window.innerWidth;
+  cursorY = idx.y * window.innerHeight;
+  handCursorEl.style.left = cursorX + 'px';
+  handCursorEl.style.top = cursorY + 'px';
+  handCursorEl.classList.add('active');
+}
+
+function updateHover(){
+  const el = document.elementFromPoint(cursorX, cursorY);
+  const target = el ? el.closest('button:not(:disabled), .tab, .mode-chip, .color-swatch, .nav-btn') : null;
+  if(target !== lastHoverEl){
+    if(lastHoverEl) lastHoverEl.classList.remove('hand-hover');
+    if(target) target.classList.add('hand-hover');
+    lastHoverEl = target;
+  }
+  return target;
+}
+
+function handlePinch(pinchNow){
+  const target = updateHover();
+  handCursorEl.classList.toggle('pinch-active', pinchNow);
+  if(pinchNow && !pinchWasDown && target){
+    target.click();
+    if(navigator.vibrate) navigator.vibrate(15);
+  }
+  pinchWasDown = pinchNow;
+}
+
+function trackSwipe(lm){
+  const cx = (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5;
+  const now = performance.now();
+  palmXHistory.push({x:cx, t:now});
+  palmXHistory = palmXHistory.filter(p => now - p.t < 260);
+  if(palmXHistory.length < 3) return;
+  if(now - lastSwipeTime < 700) return;
+  const dx = palmXHistory[palmXHistory.length-1].x - palmXHistory[0].x;
+  if(Math.abs(dx) > 0.22){
+    lastSwipeTime = now;
+    switchTab(dx > 0 ? 1 : -1); // mirrored feed: hand moving screen-right = dx>0 in raw coords
+    palmXHistory = [];
+  }
+}
+function switchTab(dir){
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  const activeIdx = tabs.findIndex(t=>t.classList.contains('active'));
+  let next = (activeIdx + dir + tabs.length) % tabs.length;
+  tabs[next].click();
+  showToast('Swiped → ' + tabs[next].textContent);
+}
+
+function speak(text){
+  if(!voiceEnabled || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.05;
+  speechSynthesis.speak(u);
+}
+
+function scheduleAutoRead(){
+  clearTimeout(autoReadTimer);
+  if(!autoReadEnabled || strokes.length === 0) return;
+  autoReadTimer = setTimeout(()=>{
+    const mode = document.querySelector('.tab.active').dataset.mode;
+    if(mode === 'free') readCanvas('exprInput', readBtn);
+    else if(mode === 'practice') readCanvas('answerInput', readBtn);
+  }, 1300);
+}
+
+document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenStage);
+document.getElementById('fsQuickBtn').addEventListener('click', toggleFullscreenStage);
+function toggleFullscreenStage(){
+  isFullscreenCanvas = !isFullscreenCanvas;
+  stage.classList.toggle('fullscreen-stage', isFullscreenCanvas);
+  document.getElementById('exitFsBtn').style.display = isFullscreenCanvas ? 'block' : 'none';
+  document.getElementById('fullscreenBtn').textContent = isFullscreenCanvas ? 'EXIT_FULL' : 'FULLSCREEN';
+  document.getElementById('fsQuickBtn').textContent = isFullscreenCanvas ? '⛶ EXIT' : '⛶ FULLSCREEN';
+  requestAnimationFrame(resizeCanvas);
+  showToast(isFullscreenCanvas ? 'Fullscreen canvas — pinch [EXIT_FULLSCREEN] to leave' : 'Back to panel view');
+}
+document.getElementById('exitFsBtn').addEventListener('click', ()=>{
+  if(isFullscreenCanvas) document.getElementById('fullscreenBtn').click();
+});
+document.getElementById('voiceBtn').addEventListener('click', ()=>{
+  voiceEnabled = !voiceEnabled;
+  document.getElementById('voiceBtn').textContent = voiceEnabled ? '[VOICE: ON]' : '[VOICE: OFF]';
+  if(!voiceEnabled && 'speechSynthesis' in window) speechSynthesis.cancel();
+});
+document.getElementById('autoReadBtn').addEventListener('click', ()=>{
+  autoReadEnabled = !autoReadEnabled;
+  document.getElementById('autoReadBtn').textContent = autoReadEnabled ? '[AUTO_READ: ON]' : '[AUTO_READ: OFF]';
+});
 
 let currentColor = '#33ff77';
 let currentGlow = 'rgba(51,255,119,.9)';
@@ -675,6 +889,8 @@ function resizeCanvas(){
   const rect = stage.getBoundingClientRect();
   drawCanvas.width = rect.width;
   drawCanvas.height = rect.height;
+  skeletonCanvas.width = rect.width;
+  skeletonCanvas.height = rect.height;
   redrawAll();
 }
 window.addEventListener('resize', resizeCanvas);
@@ -699,6 +915,7 @@ function paintStroke(stroke){
 }
 
 function addPoint(x,y){
+  clearTimeout(autoReadTimer);
   if(!currentStroke){
     currentStroke = [];
     currentStroke.color = currentColor;
@@ -712,7 +929,10 @@ function addPoint(x,y){
   redrawAll();
 }
 
-function liftPen(){ currentStroke = null; smoothX = null; smoothY = null; }
+function liftPen(){
+  if(currentStroke) scheduleAutoRead();
+  currentStroke = null; smoothX = null; smoothY = null;
+}
 
 function undoStroke(){
   strokes.pop();
@@ -823,15 +1043,49 @@ function updateFPS(){
 
 let camera = null;
 let isCameraRunning = false;
+let hands = null;
+const mediapipeAvailable = (typeof Hands !== 'undefined') && (typeof Camera !== 'undefined');
 
-const hands = new Hands({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`});
-hands.setOptions({
-  maxNumHands:1,
-  modelComplexity:1,
-  minDetectionConfidence:0.7,
-  minTrackingConfidence:0.6
-});
+if(mediapipeAvailable){
+  try{
+    hands = new Hands({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`});
+    hands.setOptions({
+      maxNumHands:1,
+      modelComplexity:1,
+      minDetectionConfidence:0.7,
+      minTrackingConfidence:0.6
+    });
+  }catch(e){
+    console.error('MediaPipe Hands init failed:', e);
+    hands = null;
+  }
+} else {
+  console.warn('MediaPipe scripts did not load — hand tracking disabled, touch mode still works.');
+}
 
+function drawSkeleton(lm, gesture){
+  sctx.clearRect(0,0,skeletonCanvas.width,skeletonCanvas.height);
+  if(!showSkeleton) return;
+  const pts = lm.map(p => mapLandmarkToCanvas(p.x, p.y));
+  const color = gesture==='draw' ? '#33ff77' : gesture==='hover' ? '#ffb300' : gesture==='clear' ? '#ff4d4d' : '#5f8f70';
+  sctx.strokeStyle = color; sctx.lineWidth = 2; sctx.globalAlpha = 0.85;
+  sctx.shadowBlur = 8; sctx.shadowColor = color;
+  HAND_CONNECTIONS.forEach(([a,b])=>{
+    sctx.beginPath();
+    sctx.moveTo(pts[a].x, pts[a].y);
+    sctx.lineTo(pts[b].x, pts[b].y);
+    sctx.stroke();
+  });
+  pts.forEach((p,i)=>{
+    sctx.beginPath();
+    sctx.arc(p.x, p.y, i===8?6:3.5, 0, Math.PI*2);
+    sctx.fillStyle = i===8 ? '#ffffff' : color;
+    sctx.fill();
+  });
+  sctx.globalAlpha = 1; sctx.shadowBlur = 0;
+}
+
+if(hands){
 hands.onResults((results)=>{
   updateFPS();
   if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){
@@ -839,15 +1093,38 @@ hands.onResults((results)=>{
     liftPen();
     clearHoldFrames = 0;
     clearBadge.style.display='none';
+    document.getElementById('confText').textContent = 'CONF --';
+    sctx.clearRect(0,0,skeletonCanvas.width,skeletonCanvas.height);
+    gestureHistory = [];
+    handCursorEl.classList.remove('active');
+    if(lastHoverEl){ lastHoverEl.classList.remove('hand-hover'); lastHoverEl = null; }
     return;
   }
   const lm = results.multiHandLandmarks[0];
-  const gesture = classifyGesture(lm);
+  const rawGesture = classifyGesture(lm);
+  const gesture = stableGesture(rawGesture);
   setGestureUI(gesture);
+  drawSkeleton(lm, gesture);
+
+  if(results.multiHandedness && results.multiHandedness[0]){
+    document.getElementById('confText').textContent = 'CONF ' + Math.round(results.multiHandedness[0].score*100) + '%';
+  }
+
+  updateHandCursor(lm);
+  const pinchNow = stablePinch(pinchDistance(lm) < 0.45);
+  handlePinch(pinchNow);
+  if(!pinchNow && gesture !== 'draw') trackSwipe(lm);
+
+  if(pinchNow){
+    liftPen();
+    clearHoldFrames = 0;
+    clearBadge.style.display='none';
+    return;
+  }
 
   const mapped = mapLandmarkToCanvas(lm[8].x, lm[8].y);
-  smoothX = smoothX===null ? mapped.x : smoothX + (mapped.x - smoothX) * SMOOTH;
-  smoothY = smoothY===null ? mapped.y : smoothY + (mapped.y - smoothY) * SMOOTH;
+  const sm = adaptiveSmooth(mapped.x, mapped.y);
+  smoothX = sm.x; smoothY = sm.y;
 
   if(gesture === 'draw'){
     clearHoldFrames = 0;
@@ -869,8 +1146,16 @@ hands.onResults((results)=>{
     liftPen();
   }
 });
+}
 
 document.getElementById('startBtn').addEventListener('click', async ()=>{
+  if(!hands || typeof Camera === 'undefined'){
+    stageEmpty.innerHTML = '<p>&gt; ERROR: hand-tracking library failed to load (CDN blocked or offline).<br>&gt; check your internet connection, or use touch mode now.</p><button class="primary" id="startBtn2">RETRY</button><button class="ghost" id="touchFallbackBtn2" style="margin-top:6px;">USE_TOUCH_INSTEAD</button>';
+    document.getElementById('startBtn2').addEventListener('click', ()=>location.reload());
+    document.getElementById('touchFallbackBtn2').addEventListener('click', ()=>{ document.getElementById('touchFallbackBtn').click(); });
+    showToast('Hand-tracking unavailable — using touch mode instead', 'warn');
+    return;
+  }
   try{
     stageEmpty.innerHTML = '<p>&gt; initializing camera…</p>';
     camera = new Camera(video, {
@@ -1049,11 +1334,12 @@ document.getElementById('calcBtn').addEventListener('click', ()=>{
   if(!exprRaw){ resultVal.textContent='--'; resultHint.textContent='awaiting input'; return; }
   try{
     const expr = exprRaw.replace(/=+$/,'');
-    const val = math.evaluate(expr);
+    const val = safeEvaluate(expr);
     resultVal.textContent = val;
     resultHint.textContent = 'from: ' + expr;
     pushHistory(expr, val);
     showToast(`Result: ${val}`);
+    speak(`Result ${val}`);
   }catch(e){
     resultVal.textContent = 'ERR: SYNTAX';
     resultVal.classList.add('err');
@@ -1170,7 +1456,11 @@ function newQuestion(){
   if(op === '-' && b > a) [a,b] = [b,a];
   if(op === '*'){ a = Math.floor(Math.random()*12)+1; b = Math.floor(Math.random()*12)+1; }
   document.getElementById('practiceQ').textContent = `${a} ${op} ${b}`;
-  currentAnswer = math.evaluate(`${a}${op}${b}`);
+  try{
+    currentAnswer = safeEvaluate(`${a}${op}${b}`);
+  }catch(e){
+    currentAnswer = (op==='+') ? a+b : (op==='-') ? a-b : a*b;
+  }
   document.getElementById('answerInput').value = '';
   const fb = document.getElementById('practiceFeedback');
   fb.textContent = ''; fb.className = 'feedback';
@@ -1185,7 +1475,7 @@ document.getElementById('checkBtn').addEventListener('click', ()=>{
   const fb = document.getElementById('practiceFeedback');
   if(!val){ fb.textContent = '> write your answer, then READ_DRAWING.'; fb.className='feedback'; return; }
   let userVal;
-  try{ userVal = math.evaluate(val); } catch(e){ userVal = null; }
+  try{ userVal = safeEvaluate(val); } catch(e){ userVal = null; }
   const timeTaken = questionStartTime ? ((Date.now() - questionStartTime)/1000).toFixed(1) : null;
 
   if(userVal !== null && Number(userVal) === Number(currentAnswer)){
@@ -1202,6 +1492,7 @@ document.getElementById('checkBtn').addEventListener('click', ()=>{
     saveStats(stats);
     updateStatsDisplay();
     showToast(`Correct! +1 streak (${streak})`);
+    speak('Correct');
     setTimeout(newQuestion, 900);
   } else {
     streak = 0;
@@ -1209,12 +1500,25 @@ document.getElementById('checkBtn').addEventListener('click', ()=>{
     fb.textContent = `> INCORRECT — expected ${currentAnswer}`;
     fb.className = 'feedback bad';
     showToast('Wrong answer — try again!', 'warn');
+    speak('Incorrect. Expected ' + currentAnswer);
   }
 });
 
-newQuestion();
+try{ newQuestion(); }catch(e){ console.error('newQuestion failed:', e); }
 resizeCanvas();
-updateStatsDisplay();
+try{ updateStatsDisplay(); }catch(e){ console.error('updateStatsDisplay failed:', e); }
+
+// ================= Library availability check =================
+(function(){
+  const missing = [];
+  if(!mediapipeAvailable) missing.push('Hand-tracking (MediaPipe)');
+  if(typeof Tesseract === 'undefined') missing.push('OCR (Tesseract)');
+  if(typeof math === 'undefined') missing.push('Math engine (fallback active)');
+  if(typeof Chart === 'undefined') missing.push('Charts');
+  if(missing.length){
+    showToast('Blocked/offline: ' + missing.join(', ') + ' — rest of the app still works', 'warn');
+  }
+})();
 
 if('serviceWorker' in navigator){
   console.log('PWA capable');
